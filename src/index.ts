@@ -151,7 +151,7 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       retryDelay: axiosRetry.exponentialDelay,
     });
 
-    this.on("canceled", this.cleanUpDownloadedFiles);
+    this.on("canceled", () => this.cleanUpDownloadedFiles());
     this.on("error", async error => {
       console.error("error", error);
       this.status = "error";
@@ -195,8 +195,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
         return;
       }
       this.emit("completed");
-    } catch (error) {
-      this.emit("error", error);
+    } catch (error: any) {
+      this.emit("error", error?.message ?? String(error));
     }
   }
 
