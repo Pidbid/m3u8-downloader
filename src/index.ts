@@ -63,6 +63,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     headers: RawAxiosRequestHeaders;
     startIndex: number;
     endIndex?: number;
+    startTime?: number;
+    endTime?: number;
     skipExistSegments: boolean;
     suffix: string;
   };
@@ -80,6 +82,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
    * @param options.headers Headers to be sent with the HTTP request
    * @param options.startIndex Start index of the segment to download
    * @param options.endIndex End index of the segment to download
+   * @param options.startTime Start time in seconds
+   * @param options.endTime End time in seconds
    * @param options.skipExistSegments Skip download if the segment file already exists
    */
   constructor(
@@ -96,6 +100,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       headers?: RawAxiosRequestHeaders;
       startIndex?: number;
       endIndex?: number;
+      startTime?: number;
+      endTime?: number;
       skipExistSegments?: boolean;
       suffix?: string;
     } = {}
@@ -153,8 +159,9 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
         throw new Error("Output directory does not exist");
       }
       const m3u8Content = await this.getM3U8();
-      const tsUrls = this.parseM3U8(m3u8Content);
-      const urls = tsUrls.slice(this.options.startIndex, this.options.endIndex);
+      const urls = this.parseM3U8(m3u8Content);
+      console.log(urls);
+
       this.totalSegments = urls.length;
 
       await this.downloadTsSegments(urls);
@@ -240,7 +247,43 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     parser.end();
 
     const parsedManifest = parser.manifest;
-    return (parsedManifest?.segments || []).map(segment => {
+    let segments = parsedManifest?.segments || [];
+
+    // Handle time-based filtering
+    if (
+      this.options.startTime !== undefined ||
+      this.options.endTime !== undefined
+    ) {
+      let currentTime = 0;
+      const startTime = this.options.startTime ?? 0;
+      const endTime = this.options.endTime ?? Infinity;
+      if (startTime >= endTime) {
+        this.emit("error", "startTime must be less than endTime");
+        throw new Error("startTime must be less than endTime");
+      }
+
+      segments = segments.filter(segment => {
+        const segmentStart = currentTime;
+        const segmentEnd = currentTime + segment.duration;
+        currentTime = segmentEnd;
+
+        return segmentEnd > startTime && segmentStart < endTime;
+      });
+    }
+
+    // Handle index-based filtering
+    if (
+      this.options.startIndex !== undefined ||
+      this.options.endIndex !== undefined
+    ) {
+      if (this.options.startIndex! >= this.options.endIndex!) {
+        this.emit("error", "startIndex must be less than endIndex");
+        throw new Error("startIndex must be less than endIndex");
+      }
+      segments = segments.slice(this.options.startIndex, this.options.endIndex);
+    }
+
+    return segments.map(segment => {
       if (isUrl(segment.uri)) {
         return segment.uri;
       } else {
