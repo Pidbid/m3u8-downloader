@@ -8,7 +8,7 @@ import axios from "axios";
 import axiosRetry from "axios-retry";
 import PQueue from "p-queue";
 import * as m3u8Parser from "m3u8-parser";
-import { isUrl } from "./utils.js";
+import { isUrl, retry } from "./utils.js";
 
 import type { RawAxiosRequestHeaders } from "axios";
 
@@ -52,6 +52,7 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     | "canceled"
     | "completed"
     | "error" = "pending";
+  private http: ReturnType<typeof axios.create>;
   private options: {
     concurrency: number;
     convert2Mp4: boolean;
@@ -67,6 +68,12 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     endTime?: number;
     skipExistSegments: boolean;
     suffix: string;
+    proxy?: {
+      host: string;
+      port: number;
+      protocol?: string;
+      auth?: { username: string; password: string };
+    };
   };
 
   /**
@@ -104,6 +111,12 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       endTime?: number;
       skipExistSegments?: boolean;
       suffix?: string;
+      proxy?: {
+        host: string;
+        port: number;
+        protocol?: string;
+        auth?: { username: string; password: string };
+      };
     } = {}
   ) {
     super();
@@ -129,12 +142,22 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     this.downloadedSegments = 0;
     this.downloadedFiles = [];
 
-    axiosRetry(axios, {
+    // axios 统一实例化，方便增加axios功能，比如拦截器
+    this.http = axios.create({
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        ...this.options.headers,
+      },
+      proxy: this.options.proxy || false,
+    });
+
+    axiosRetry(this.http, {
       retries: this.options.retries,
       retryDelay: axiosRetry.exponentialDelay,
     });
 
-    this.on("canceled", this.cleanUpDownloadedFiles);
+    this.on("canceled", () => this.cleanUpDownloadedFiles());
     this.on("error", async error => {
       console.error("error", error);
       this.status = "error";
@@ -179,8 +202,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
         return;
       }
       this.emit("completed");
-    } catch (error) {
-      this.emit("error", error);
+    } catch (error: any) {
+      this.emit("error", error?.message ?? String(error));
     }
   }
 
@@ -222,13 +245,7 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
    */
   private async getM3U8(): Promise<string> {
     try {
-      const { data: m3u8Content } = await axios.get(this.m3u8Url, {
-        headers: {
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-          ...this.options.headers,
-        },
-      });
+      const { data: m3u8Content } = await this.http.get(this.m3u8Url);
       return m3u8Content;
     } catch (error) {
       this.emit("error", "Failed to download m3u8 file");
@@ -310,13 +327,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       return progress;
     }
 
-    const response = await axios.get(tsUrl, {
+    const response = await this.http.get(tsUrl, {
       responseType: "arraybuffer",
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-        ...this.options.headers,
-      },
     });
 
     await fs.writeFile(segmentPath, response.data);
@@ -434,13 +446,20 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
         reject(error);
       });
 
-      ffmpeg.on("close", code => {
+      ffmpeg.on("close", async code => {
         if (code !== 0) {
           this.emit("error", `FFmpeg process exited with code ${code}`);
           reject(new Error(`FFmpeg process exited with code ${code}`));
           return;
         }
-        fs.unlinkSync(inputFilePath); // remove merged TS file
+
+        // remove merged TS file with retry
+        try {
+          await retry(() => fs.unlink(inputFilePath), 5, 1000);
+        } catch (error) {
+          console.error(`Failed to delete temporary TS file: ${error}`);
+        }
+
         resolve(outputFilePath);
         this.emit("converted", outputFilePath);
       });
