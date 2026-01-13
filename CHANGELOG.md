@@ -1,3 +1,8 @@
+# 0.5.0
+
+- add `startTime` and `endTime` param
+- add random temp dir
+
 # 0.4.1
 
 - fix: remove merged TS file with retry

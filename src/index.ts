@@ -8,7 +8,7 @@ import axios from "axios";
 import axiosRetry from "axios-retry";
 import PQueue from "p-queue";
 import * as m3u8Parser from "m3u8-parser";
-import { isUrl, retry } from "./utils.js";
+import { isUrl, retry, uuid } from "./utils.js";
 
 import type { RawAxiosRequestHeaders } from "axios";
 
@@ -124,7 +124,7 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       concurrency: 5,
       convert2Mp4: false,
       mergeSegments: true,
-      segmentsDir: os.tmpdir(),
+      segmentsDir: path.join(os.tmpdir(), "m3u8-downloader", uuid()),
       retries: 3,
       ffmpegPath: "ffmpeg",
       clean: true,
@@ -141,6 +141,8 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
     this.totalSegments = 0;
     this.downloadedSegments = 0;
     this.downloadedFiles = [];
+    fs.ensureDirSync(this.segmentsDir);
+    console.log("Temporary segments directory:", this.segmentsDir);
 
     // axios 统一实例化，方便增加axios功能，比如拦截器
     this.http = axios.create({
@@ -183,7 +185,6 @@ export default class M3U8Downloader extends TypedEmitter<M3U8DownloaderEvents> {
       }
       const m3u8Content = await this.getM3U8();
       const urls = this.parseM3U8(m3u8Content);
-      console.log(urls);
 
       this.totalSegments = urls.length;
 
